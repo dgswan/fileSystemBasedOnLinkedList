@@ -133,32 +133,38 @@ file_descr_t *get_file_meta(const char *name) {
 	return NULL;
 }
 
-int get_file_data(const char *name, char **data1) {
-	char *data = NULL;
-	int currentBlock = 0;
-	file_descr_t *fd;
-	int gotBlocks = 0;
-	int i = 0;
-	int bytes = 0;
-	fd = get_file_meta(name);
-	if (fd == NULL)
-		return -1;
-	data = (char*)malloc(sizeof(char) * fd->size);
-	currentBlock = fd->start;
-	while (currentBlock != -1) {
-		bytes = (fd->size - gotBlocks * BLOCK_SIZE) > BLOCK_SIZE ? BLOCK_SIZE : (fd->size - gotBlocks * BLOCK_SIZE);
-		memcpy(data + gotBlocks * BLOCK_SIZE, fs.blocks[currentBlock].data, bytes);			
-		gotBlocks++;
-		currentBlock = fs.nextBlock[currentBlock];
-	}
-	*data1 = data;
-	return fd->size;
-}
-
 int write_fd(file_descr_t *fd, int id) {
 	FILE *pfile = fopen(FS_FILE, "r+");
 	fseek(pfile, id * sizeof(file_descr_t), SEEK_SET);
 	fwrite(fd, 1, sizeof(file_descr_t), pfile);
+	fclose(pfile);
+	return 0;
+}
+
+int _write(file_descr_t *fd, void *data, int size) {
+	if (size == 0)
+		return 0;
+	int i = fd->start, j = 0, b = BLOCK_SIZE;
+	FILE *pfile = fopen("fs", "r+");
+	while (i != -1) {
+		b = (j * BLOCK_SIZE + BLOCK_SIZE) > size ? size % BLOCK_SIZE : b;
+		fseek(pfile, sizeof(file_descr_t) * FILE_NUMBER + sizeof(int) * BLOCK_NUMBER + i * BLOCK_SIZE, SEEK_SET);
+		fwrite(data + j * BLOCK_SIZE, 1, 1 * b, pfile);
+		i = fs.nextBlock[i];
+		j++;
+	}
+	fclose(pfile);
+	return 0;
+}
+
+int write_precedence_vector(file_descr_t *fd) {
+	FILE *pfile = fopen(FS_FILE, "r+");
+	int i = fd->start;
+	while (i != -1) {
+		fseek(pfile, sizeof(file_descr_t) * FILE_NUMBER + i * sizeof(int), SEEK_SET);
+		fwrite(&i, sizeof(int), 1, pfile);
+		i = fs.nextBlock[i];
+	}
 	fclose(pfile);
 	return 0;
 }
@@ -186,7 +192,6 @@ int add_file(char *name, char *data, int size, char isFolder) {
 	lastBlockBytes = size % BLOCK_SIZE;
 	currentBlock = startBlock;
 	while (writtenBlocks != blocks) {
-		//copy data to block
 		writtenBlocks++;
 		previousBlock = currentBlock;
 		fs.nextBlock[previousBlock] = -1;
@@ -211,28 +216,15 @@ int add_file(char *name, char *data, int size, char isFolder) {
 	}
 	_write(&fs.fd[file_descr_place], data, size);
 	write_fd(&fs.fd[file_descr_place], file_descr_place);
+	write_precedence_vector(&fs.fd[file_descr_place]);
 	return file_descr_place;
 }
 
-int _write(file_descr_t *fd, void *data, int size) {
-	if (size == 0)
-		return 0;
-	int i = fd->start, j = 0, b = BLOCK_SIZE;
-	FILE *pfile = fopen("fs", "r+");
-	while (i != -1) {
-		b = (j * BLOCK_SIZE + BLOCK_SIZE) > size ? size % BLOCK_SIZE : b;
-		fseek(pfile, sizeof(file_descr_t) * FILE_NUMBER + i * BLOCK_SIZE, SEEK_SET);
-		fwrite(data + j * BLOCK_SIZE, 1 * b, 1, pfile);
-		i = fs.nextBlock[i];
-		j++;
-	}
-	fclose(pfile);
-	return 0;
-}
 
 //--------------------------------------------------------
 
 int get_data(file_descr_t *fd, char **data1) {
+	FILE *pfile = fopen(FS_FILE, "r");
 	char *data = NULL;
 	int currentBlock = 0;
 	int gotBlocks = 0;
@@ -244,10 +236,12 @@ int get_data(file_descr_t *fd, char **data1) {
 	currentBlock = fd->start;
 	while (currentBlock != -1) {
 		bytes = (fd->size - gotBlocks * BLOCK_SIZE) > BLOCK_SIZE ? BLOCK_SIZE : (fd->size - gotBlocks * BLOCK_SIZE);
-		memcpy(data + gotBlocks * BLOCK_SIZE, fs.blocks[currentBlock].data, bytes);			
+		fseek(pfile, sizeof(file_descr_t) * FILE_NUMBER + BLOCK_NUMBER * sizeof(int) + currentBlock * BLOCK_SIZE, SEEK_SET); 
+		fread(data + gotBlocks * BLOCK_SIZE, 1, bytes, pfile);
 		gotBlocks++;
 		currentBlock = fs.nextBlock[currentBlock];
 	}
+	fclose(pfile);
 	*data1 = data;
 	return fd->size;
 }
@@ -272,7 +266,6 @@ file_descr_t *get_meta(const char *path) {
 	memset(filename, '\0', FILENAME_LENGTH);
 	if (*ptr++ == '/') {
 		meta = get_meta_by_id(0);
-		printf("%s \n", meta->name);
 	}
 	else 
 		return NULL;
@@ -318,47 +311,37 @@ int mkdir1(const char *path) {
 
 
 int create_clear_fs() {
+	printf("Hello");
 	int i = 0;
 	char *buf;
 	FILE *pfile;
 	pfile = fopen("fs", "w+");
-
+	//allocate place for file descriptors
 	buf = (char*)malloc(sizeof(file_descr_t));
 	memset(buf, '\0', sizeof(file_descr_t));
 	for (i = 0; i < FILE_NUMBER; i++) {
-		fwrite(buf, 1, sizeof(file_descr_t), pfile);
+		fwrite(buf, sizeof(file_descr_t), 1, pfile);
 	}
 	free(buf);
+	//allocate place for precedence vector
 	buf = (char*)malloc(sizeof(int));
 	memset(buf, '\0', sizeof(int));
-	for (i = 0; i < FILE_NUMBER; i++) {
-		fwrite(buf, 1, sizeof(int), pfile);
+	for (i = 0; i < BLOCK_NUMBER; i++) {
+		fwrite(buf, sizeof(int), 1, pfile);
 	}
 	free(buf);
+	//allocate place for data blocks
 	buf = (char*)malloc(sizeof(block_t));
 	memset(buf, '\0', sizeof(block_t));
 	for (i = 0; i < BLOCK_NUMBER; i++) {
-		fwrite(buf, 1, sizeof(block_t), pfile);
+		fwrite(buf, sizeof(block_t), 1, pfile);
 	}
 	free(buf);
-
 	fclose(pfile);
-
-	int fd_id = add_file("/", buf, 0, 1);
-
+	add_file("/", buf, 0, 1);
 	return 0;
 }
 
-int _read(file_descr_t *fd, void **data) {
-	int i = 0;
-	FILE *pfile = fopen("fs", "r");
-	for (i = fd->start; i = fs.nextBlock[i]; i != -1) {
-		fseek(pfile, i * BLOCK_SIZE, SEEK_SET);
-		fread(data + i * BLOCK_SIZE, 1 * BLOCK_SIZE, 1, pfile);
-	}
-	fclose(pfile);
-	return fd->size;
-}
 
 //---------------------------------------------------------------------------
 
@@ -499,13 +482,11 @@ int main(int argc, char *argv[])
 	fd1[1] = 7;
 
 	if (argc > 1 && strcmp(argv[1],"n") == 0) {
-		init_fs();
+		//init_fs();
 		create_clear_fs();
 	}
 	else {
 		init_fs();
-		//save_fs("fs");
-		//load_fs("fs");
 		add_file(root, fd, sizeof(int) * 5, 1);
 		add_file(fileName1, data1, strlen(data1), 0);
 		add_file(fileName2, data2, strlen(data2), 0);
@@ -514,6 +495,16 @@ int main(int argc, char *argv[])
 		add_file(folder, fd1, sizeof(int) * 2, 1);
 		add_file(fileName5, data32, strlen(data32), 0);
 		add_file(fileName2, data1, strlen(data1), 0);
+		
+		file_descr_t *mfd = get_meta("/file");
+		size = get_data(mfd, &buf);
+		printf("%s \n", buf);
+		free(buf);
+
+		mfd = get_meta("/folder/ui");
+		size = get_data(mfd, &buf);
+		printf("%s \n", buf);
+		free(buf);
 	}
 	//return fuse_main(argc, argv, &hello_oper, NULL);
 	//if (mkdir1("/fol") != 0)
