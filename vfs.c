@@ -21,9 +21,6 @@
 
 #include <stdlib.h>
 
-static const char *hello_str = "Hello World!\n";
-static const char *hello_path = "/hello";
-
 #define BLOCK_NUMBER 32
 #define BLOCK_SIZE 32
 #define FILENAME_LENGTH 32
@@ -181,7 +178,7 @@ int get_file_data(const char *name, char **data1) {
 	return fd->size;
 }
 
-int add_file(char *name, char *data, int size) {
+int add_file(char *name, char *data, int size, char isFolder) {
 	int previousBlock = -1;
 	int writtenBlocks = 0;
 	int currentBlock = 0;
@@ -192,7 +189,7 @@ int add_file(char *name, char *data, int size) {
 	if (file_descr_place == NO_FREE_FILE_DESCR_SPACE)
 		return NO_FREE_FILE_DESCR_SPACE;
 	fs.fd[file_descr_place].isFree = 0;
-	fs.fd[file_descr_place].isFolder = 0;
+	fs.fd[file_descr_place].isFolder = isFolder;
 	fs.fd[file_descr_place].size = size;
 	strcpy(fs.fd[file_descr_place].name, name);
 	startBlock = find_free_block();
@@ -232,11 +229,72 @@ int add_file(char *name, char *data, int size) {
 	return 0;
 }
 
+//--------------------------------------------------------
+
+int get_data(file_descr_t *fd, char **data1) {
+	char *data = NULL;
+	int currentBlock = 0;
+	int gotBlocks = 0;
+	int i = 0;
+	int bytes = 0;
+	if (fd == NULL)
+		return -1;
+	data = (char*)malloc(sizeof(char) * fd->size);
+	currentBlock = fd->start;
+	while (currentBlock != -1) {
+		bytes = (fd->size - gotBlocks * BLOCK_SIZE) > BLOCK_SIZE ? BLOCK_SIZE : (fd->size - gotBlocks * BLOCK_SIZE);
+		memcpy(data + gotBlocks * BLOCK_SIZE, fs.blocks[currentBlock].data, bytes);			
+		gotBlocks++;
+		currentBlock = fs.nextBlock[currentBlock];
+	}
+	*data1 = data;
+	return fd->size;
+}
+
+file_descr_t *get_meta_by_id(int id) {
+	return &fs.fd[id];
+}
+
+int get_id(char *data, int size, char *filename) {
+	int i = 0;
+	for (i = 0; i < size / sizeof(int); i++)
+		if (strcmp(fs.fd[((int*)data)[i]].name, filename) == 0)
+			return ((int*)data)[i];
+	return -1;
+}
+
+file_descr_t *get_meta(const char *path) {
+	int size = 0;
+	file_descr_t *meta = NULL;
+	int id = -1;
+	char filename[FILENAME_LENGTH], *data, *start, *ptr = path;
+	memset(filename, '\0', FILENAME_LENGTH);
+	if (*ptr++ == '/')
+		meta = get_meta_by_id(0);
+	else 
+		return NULL;
+	while ((ptr - path) != strlen(path)) {
+		size = get_data(meta, &data);
+		start = ptr;
+		while ((*ptr++ != '/') && ((ptr - path) < strlen(path)));
+		(ptr - path) < strlen(path) ? strncpy(filename, start, ptr - start - 1) : strncpy(filename, start, ptr - start);
+		id = get_id(data, size, filename);
+		if (id != -1)
+			meta = get_meta_by_id(id);
+		memset(filename, '\0', FILENAME_LENGTH);
+		free(data);
+	}
+	return meta;
+}
+
+//---------------------------------------------------------------------------
+
 // /aaa/bbb/ccc/file || aaa/bbb/ccc/file
 // aaa/bbb/ccc/file
 // bbb/ccc/file
 // ccc/file
 // file
+
 int open_file1(const char *path, char *ptr, char *file, char **buf) {
 	char *data;
 	file_descr_t *fd;
@@ -302,13 +360,19 @@ static int my_getattr(const char *path, struct stat *stbuf)
 	int res = 0;
 
 	char *resData;
-	int len =  myfread(path, resData);
+
+	file_descr_t *meta = get_meta(path);
+
+	if (meta == NULL)
+		return -ENOENT;
+
+	int len =  get_data(meta, &resData);
 
 	if (len < 0)
 		return -ENOENT;
 
 	memset(stbuf, 0, sizeof(struct stat));
-	if (strcmp(path, "/") == 0) {
+	if (meta->isFolder == 1) {
 		stbuf->st_mode = S_IFDIR | 0755;
 		stbuf->st_nlink = 2;
 	} /*else if (strcmp(path, hello_path) == 0) {
@@ -319,12 +383,11 @@ static int my_getattr(const char *path, struct stat *stbuf)
 		res = -ENOENT;
 
 	return res;*/
-	else if (resData != NULL) {
+	else {
 		stbuf->st_mode = S_IFREG | 0444;
 		stbuf->st_nlink = 1;
-		stbuf->st_size = len;
-	} else
-		res = -ENOENT;
+		stbuf->st_size = meta->size;
+	};
 	return res;
 }
 
@@ -385,10 +448,8 @@ static int my_read(const char *path, char *buf, size_t size, off_t offset,
 	size_t len;
 	char *resData;
 	len = myfread(path, resData);
-	if (len < 0) {
+	if (len < 0)
 		return -ENOENT;
-	}
-	//len = strlen(resData);
 	if (offset < len) {
 		if (offset + size > len)
 			size = len - offset;
@@ -450,14 +511,14 @@ int main(int argc, char *argv[])
 	init_fs();
 	save_fs("fs");
 	load_fs("fs");
-	add_file(root, fd, sizeof(int) * 5);
-	add_file(fileName1, data1, strlen(data1));
-	add_file(fileName2, data2, strlen(data2));
-	add_file(fileName3, data3, strlen(data3));
-	add_file(fileName4, data4, strlen(data4));
-	add_file(folder, fd1, sizeof(int) * 2);
-	add_file(fileName5, data32, strlen(data32));
-	add_file(fileName2, data1, strlen(data1));
+	add_file(root, fd, sizeof(int) * 5, 1);
+	add_file(fileName1, data1, strlen(data1), 0);
+	add_file(fileName2, data2, strlen(data2), 0);
+	add_file(fileName3, data3, strlen(data3), 0);
+	add_file(fileName4, data4, strlen(data4), 0);
+	add_file(folder, fd1, sizeof(int) * 2, 1);
+	add_file(fileName5, data32, strlen(data32), 0);
+	add_file(fileName2, data1, strlen(data1), 0);
 	return fuse_main(argc, argv, &hello_oper, NULL);
 	return 0;
 }
