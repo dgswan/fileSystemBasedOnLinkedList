@@ -63,41 +63,15 @@ int init_fs() {
 	return 0;
 }
 
-int save_fs(char *fileName) {
+int load_fs() {
 	int i = 0;
-	/*FILE *pfile = fopen(fileName,"w");
-	//write fat table
-	for (i = 0; i < sizeof(fs.fd)/sizeof(fs.fd[0]); i++) {
-		fwrite(&fs.fd[i].isFree, sizeof(char), 1, pfile);
-		fwrite(&fs.fd[i].isFolder, sizeof(char), 1, pfile);
-		fwrite(fs.fd[i].name, sizeof(char), FILENAME_LENGTH, pfile);
-		fwrite(&fs.fd[i].start, sizeof(int), 1, pfile);
-		fwrite(&fs.fd[i].size, sizeof(int), 1, pfile);
-	}
-	//write next blocks
-	for (i = 0; i < BLOCK_NUMBER; i++) {
-		fwrite(&fs.nextBlock[i], sizeof(int), 1, pfile);
-	}
-	fclose(pfile);*/
-	return 0;
-}
-
-int load_fs(char *fileName) {
-	int i = 0;
-	/*FILE *pfile = fopen(fileName,"r");
-	//read fat table
-	for (i = 0; i < FILE_NUMBER; i++) {
-		fread(&fs.fd[i].isFree, sizeof(char), 1, pfile);
-		fread(&fs.fd[i].isFolder, sizeof(char), 1, pfile);
-		fread(fs.fd[i].name, sizeof(char), FILENAME_LENGTH, pfile);
-		fread(&fs.fd[i].start, sizeof(int), 1, pfile);
-		fread(&fs.fd[i].size, sizeof(int), 1, pfile);
-	}
-	//read next blocks
-	for (i = 0; i < BLOCK_NUMBER; i++) {
-		fread(&fs.nextBlock[i], sizeof(int), 1, pfile);
-	}
-	fclose(pfile);*/
+	FILE *pfile = fopen(FS_FILE,"r");
+	fread(fs.fd, sizeof(file_descr_t), FILE_NUMBER, pfile);
+	fread(fs.nextBlock, sizeof(int), BLOCK_NUMBER, pfile);
+	for (i = 0; i < BLOCK_NUMBER; i++)
+		if (fs.nextBlock[i] == 0)
+			fs.nextBlock[i] = -2;
+	fclose(pfile);
 	return 0;
 }
 
@@ -160,10 +134,12 @@ int _write(file_descr_t *fd, void *data, int size) {
 int write_precedence_vector(file_descr_t *fd) {
 	FILE *pfile = fopen(FS_FILE, "r+");
 	int i = fd->start;
+	fseek(pfile, sizeof(file_descr_t) * FILE_NUMBER + i * sizeof(int), SEEK_SET);
+	fwrite(&fs.nextBlock[i], sizeof(int), 1, pfile);
 	while (i != -1) {
-		fseek(pfile, sizeof(file_descr_t) * FILE_NUMBER + i * sizeof(int), SEEK_SET);
-		fwrite(&i, sizeof(int), 1, pfile);
 		i = fs.nextBlock[i];
+		fseek(pfile, sizeof(file_descr_t) * FILE_NUMBER + i * sizeof(int), SEEK_SET);
+		fwrite(&fs.nextBlock[i], sizeof(int), 1, pfile);
 	}
 	fclose(pfile);
 	return 0;
@@ -486,7 +462,7 @@ int main(int argc, char *argv[])
 		create_clear_fs();
 	}
 	else {
-		init_fs();
+		/*init_fs();
 		add_file(root, fd, sizeof(int) * 5, 1);
 		add_file(fileName1, data1, strlen(data1), 0);
 		add_file(fileName2, data2, strlen(data2), 0);
@@ -494,7 +470,8 @@ int main(int argc, char *argv[])
 		add_file(fileName4, data4, strlen(data4), 0);
 		add_file(folder, fd1, sizeof(int) * 2, 1);
 		add_file(fileName5, data32, strlen(data32), 0);
-		add_file(fileName2, data1, strlen(data1), 0);
+		add_file(fileName2, data1, strlen(data1), 0);*/
+		load_fs();
 		
 		file_descr_t *mfd = get_meta("/file");
 		size = get_data(mfd, &buf);
