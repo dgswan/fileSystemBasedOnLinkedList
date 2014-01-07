@@ -1,16 +1,3 @@
-/*
-  FUSE: Filesystem in Userspace
-  Copyright (C) 2001-2007  Miklos Szeredi <miklos@szeredi.hu>
-
-  This program can be distributed under the terms of the GNU GPL.
-  See the file COPYING.
-
-  gcc -Wall hello.c `pkg-config fuse --cflags --libs` -o hello
-*/
-
-
-// UNION_FIND (data structure) valgrind (profiler) gdb (debugger)
-
 #define FUSE_USE_VERSION 26
 
 #include <fuse.h>
@@ -30,10 +17,6 @@
 #define NO_FREE_BLOCKS 1001
 #define NO_FREE_FILE_DESCR_SPACE 1002
 #define FILE_DOES_NOT_EXIST 1003
-
-#define myfread(FILENAME, BUFFER) open_file(FILENAME, &BUFFER)
-#define myfread1(FILENAME, PTR, FILEN, BUFFER) open_file1(FILENAME, PTR, FILEN, BUFFER)
-#define readdata(FILENAME, BUFFER) get_file_data(FILENAME, &BUFFER)
 
 typedef struct block {	
 	char data[BLOCK_SIZE];
@@ -289,84 +272,18 @@ file_descr_t *get_meta(const char *path) {
 
 //---------------------------------------------------------------------------
 
-// /aaa/bbb/ccc/file || aaa/bbb/ccc/file
-// aaa/bbb/ccc/file
-// bbb/ccc/file
-// ccc/file
-// file
-
-int open_file1(const char *path, char *ptr, char *file, char **buf) {
-	char *data;
-	file_descr_t *fd;
-	int i = 0, fdescr = 0, data_size = 0;
-	char *start;
-	data_size = readdata(file, data);
-	//set all the bytes to '\0' in file, that means we'll be capable to read filename with strcpy
-	memset(file, '\0', FILENAME_LENGTH);
-	//if we've reached end of path we've got file data
-	if ((ptr - path) == strlen(path)) {
-		*buf = data;
-		return data_size;
-	}
-	start = ptr;
-	while (*ptr++ != '/' && strlen(path) != (ptr - path));
-	(ptr - path) != strlen(path) ? strncpy(file, start, ptr - start - 1) : strncpy(file, start, ptr - start);
-	fd = get_file_meta(file);
-	//printf("%d \n", 
-	for (i = 0; i < data_size/sizeof(int); i++) {
-		fdescr = ((int*)data)[i];
-		//checking whether "file" is described by fd[fdescr]
-		if (strcmp(fs.fd[fdescr].name, file) == 0) {
-			printf("file has been found in folder\n");
-			free(data);
-			return myfread1(path, ptr, file, buf);
-			//printf("buf %d \n", buf);
-		}
-	}
-	//if we haven't found file it's not right path, there's no such a file
-	return -1;
-}
-
-//path - full path to the file
-//buf - buffer to write the data
-//size - file size
-//return - number of read bytes, < 0 on failure
-
-int open_file(const char *path, char **buf) {
-	int size = 0;
-	int name_length = 0;
-	//ptr points at current symbol in path
-	char *ptr = path;
-	//file contains file name in fat
-	char file[FILENAME_LENGTH];
-	memset(file, '\0', FILENAME_LENGTH);
-	//look for the first '/' or the end of the path and remember its position
-	while (*ptr++ != '/' && (strlen(path) != (ptr - path)));
-	//save the string from the beginning to ptr
-	name_length = ptr - path;
-	name_length == 1 ? strncpy(file, path, name_length) : strncpy(file, path, name_length - 1);
-	file[FILENAME_LENGTH - 1] = '\0';
-
-	if ((size = myfread1(path, ptr, file, buf)) < 0)
-		printf("open_file: There's no such a file \n");
-	//memset(file, '\0', FILENAME_LENGTH);
-	return size;
-}
-
-
-
 static int my_getattr(const char *path, struct stat *stbuf)
 {
 	int res = 0;
 
-	char *resData;
+	char *data;
 
 	file_descr_t *meta = get_meta(path);
 
 	if (meta == NULL)
 		return -ENOENT;
 
-	int len =  get_data(meta, &resData);
+	int len =  get_data(meta, &data);
 
 	if (len < 0)
 		return -ENOENT;
@@ -375,14 +292,7 @@ static int my_getattr(const char *path, struct stat *stbuf)
 	if (meta->isFolder == 1) {
 		stbuf->st_mode = S_IFDIR | 0755;
 		stbuf->st_nlink = 2;
-	} /*else if (strcmp(path, hello_path) == 0) {
-		stbuf->st_mode = S_IFREG | 0444;
-		stbuf->st_nlink = 1;
-		stbuf->st_size = strlen(hello_str);
-	} else
-		res = -ENOENT;
-
-	return res;*/
+	} 
 	else {
 		stbuf->st_mode = S_IFREG | 0444;
 		stbuf->st_nlink = 1;
@@ -403,38 +313,27 @@ static int my_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	filler(buf, ".", NULL, 0);
 	filler(buf, "..", NULL, 0);
 
-	size = myfread(path, data);
+	file_descr_t *meta = get_meta(path);
+	if (meta == NULL)
+		return -ENOENT;
+
+	size = get_data(meta, &data);
 
 	if (size < 0)
 		return -ENOENT;
 
-	printf("folder data %s \n", data);
 	for (i = 0; i < size / sizeof(int); i++)
 		filler(buf, fs.fd[((int*)data)[i]].name, NULL, 0);
-	//if (strcmp(path, "/") != 0)
-	//	return -ENOENT;
-
-	//filler(buf, hello_path + 1, NULL, 0);
-	//for (i = 0; i < FILE_NUMBER; i++) {
-	//	if (!fs.fd[i].isFree) {
-	//		filler(buf, fs.fd[i].name, NULL, 0);
-	//	}
-	//}
-
 	return 0;
 }
 
 static int my_open(const char *path, struct fuse_file_info *fi)
 {
-	/*if (strcmp(path, hello_path) != 0)
+	char *data;
+	file_descr_t *meta = get_meta(path);
+	if (meta == NULL)
 		return -ENOENT;
-
-	if ((fi->flags & 3) != O_RDONLY)
-		return -EACCES;
-
-	return 0;*/
-	char *resData;
-	int len = myfread(path, resData);
+	int len = get_data(meta, &data);
 	if (len < 0)
 		return -ENOENT;
 	if ((fi->flags & 3) != O_RDONLY)
@@ -446,32 +345,23 @@ static int my_read(const char *path, char *buf, size_t size, off_t offset,
 		      struct fuse_file_info *fi)
 {
 	size_t len;
-	char *resData;
-	len = myfread(path, resData);
+	char *data;
+	file_descr_t *meta = get_meta(path);
+	if (meta == NULL)
+		return -ENOENT;
+
+	len = get_data(meta, &data);
+
 	if (len < 0)
 		return -ENOENT;
 	if (offset < len) {
 		if (offset + size > len)
 			size = len - offset;
-		memcpy(buf, resData + offset, size);
+		memcpy(buf, data + offset, size);
 	}
 	else
 		size = 0;
 	return size;
-	/*size_t len;
-	(void) fi;
-	if(strcmp(path, hello_path) != 0)
-		return -ENOENT;
-
-	len = strlen(hello_str);
-	if (offset < len) {
-		if (offset + size > len)
-			size = len - offset;
-		memcpy(buf, hello_str + offset, size);
-	} else
-		size = 0;
-
-	return size;*/
 }
 
 static struct fuse_operations hello_oper = {
