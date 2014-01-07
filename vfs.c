@@ -26,7 +26,7 @@ static const char *hello_path = "/hello";
 
 #define BLOCK_NUMBER 32
 #define BLOCK_SIZE 32
-#define FILENAME_LENGTH 8
+#define FILENAME_LENGTH 32
 #define FILE_NUMBER 32
 
 #define IS_NOT_ENOUGH_SPACE 1000
@@ -153,11 +153,9 @@ file_descr_t *get_file_meta(const char *name) {
 	int i = 0;
 	for (i = 0; i < FILE_NUMBER; i++) {
 		if (strcmp(name, fs.fd[i].name) == 0) {
-			printf("get file meta succeed \n");
 			return &fs.fd[i];
 		}
 	}
-	printf("There's no such a file\n");
 	return NULL;
 }
 
@@ -244,9 +242,7 @@ int open_file1(const char *path, char *ptr, char *file, char **buf) {
 	file_descr_t *fd;
 	int i = 0, fdescr = 0, data_size = 0;
 	char *start;
-	printf("%s \n", file);
 	data_size = readdata(file, data);
-	printf("data %s \n", data);
 	//set all the bytes to '\0' in file, that means we'll be capable to read filename with strcpy
 	memset(file, '\0', FILENAME_LENGTH);
 	//if we've reached end of path we've got file data
@@ -257,12 +253,10 @@ int open_file1(const char *path, char *ptr, char *file, char **buf) {
 	start = ptr;
 	while (*ptr++ != '/' && strlen(path) != (ptr - path));
 	(ptr - path) != strlen(path) ? strncpy(file, start, ptr - start - 1) : strncpy(file, start, ptr - start);
-	printf("%s \n", file);
 	fd = get_file_meta(file);
 	//printf("%d \n", 
 	for (i = 0; i < data_size/sizeof(int); i++) {
 		fdescr = ((int*)data)[i];
-		printf("%d %d \n", i, fdescr);
 		//checking whether "file" is described by fd[fdescr]
 		if (strcmp(fs.fd[fdescr].name, file) == 0) {
 			printf("file has been found in folder\n");
@@ -293,21 +287,25 @@ int open_file(const char *path, char **buf) {
 	//save the string from the beginning to ptr
 	name_length = ptr - path;
 	name_length == 1 ? strncpy(file, path, name_length) : strncpy(file, path, name_length - 1);
+	file[FILENAME_LENGTH - 1] = '\0';
 
 	if ((size = myfread1(path, ptr, file, buf)) < 0)
 		printf("open_file: There's no such a file \n");
-	memset(file, '\0', FILENAME_LENGTH);
+	//memset(file, '\0', FILENAME_LENGTH);
 	return size;
 }
 
 
 
-static int hello_getattr(const char *path, struct stat *stbuf)
+static int my_getattr(const char *path, struct stat *stbuf)
 {
 	int res = 0;
 
 	char *resData;
 	int len =  myfread(path, resData);
+
+	if (len < 0)
+		return -ENOENT;
 
 	memset(stbuf, 0, sizeof(struct stat));
 	if (strcmp(path, "/") == 0) {
@@ -324,35 +322,46 @@ static int hello_getattr(const char *path, struct stat *stbuf)
 	else if (resData != NULL) {
 		stbuf->st_mode = S_IFREG | 0444;
 		stbuf->st_nlink = 1;
-		stbuf->st_size = strlen(resData);
+		stbuf->st_size = len;
 	} else
 		res = -ENOENT;
 	return res;
 }
 
-static int hello_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
+static int my_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 			 off_t offset, struct fuse_file_info *fi)
 {
 	int i = 0;
 	(void) offset;
 	(void) fi;
-
-	if (strcmp(path, "/") != 0)
-		return -ENOENT;
+	char *data;
+	int size;
 
 	filler(buf, ".", NULL, 0);
 	filler(buf, "..", NULL, 0);
+
+	size = myfread(path, data);
+
+	if (size < 0)
+		return -ENOENT;
+
+	printf("folder data %s \n", data);
+	for (i = 0; i < size / sizeof(int); i++)
+		filler(buf, fs.fd[((int*)data)[i]].name, NULL, 0);
+	//if (strcmp(path, "/") != 0)
+	//	return -ENOENT;
+
 	//filler(buf, hello_path + 1, NULL, 0);
-	for (i = 0; i < FILE_NUMBER; i++) {
-		if (!fs.fd[i].isFree) {
-			filler(buf, fs.fd[i].name, NULL, 0);
-		}
-	}
+	//for (i = 0; i < FILE_NUMBER; i++) {
+	//	if (!fs.fd[i].isFree) {
+	//		filler(buf, fs.fd[i].name, NULL, 0);
+	//	}
+	//}
 
 	return 0;
 }
 
-static int hello_open(const char *path, struct fuse_file_info *fi)
+static int my_open(const char *path, struct fuse_file_info *fi)
 {
 	/*if (strcmp(path, hello_path) != 0)
 		return -ENOENT;
@@ -363,20 +372,20 @@ static int hello_open(const char *path, struct fuse_file_info *fi)
 	return 0;*/
 	char *resData;
 	int len = myfread(path, resData);
-	if (resData == NULL)
+	if (len < 0)
 		return -ENOENT;
 	if ((fi->flags & 3) != O_RDONLY)
 		return -EACCES;
 	return 0;
 }
 
-static int hello_read(const char *path, char *buf, size_t size, off_t offset,
+static int my_read(const char *path, char *buf, size_t size, off_t offset,
 		      struct fuse_file_info *fi)
 {
 	size_t len;
 	char *resData;
 	len = myfread(path, resData);
-	if (resData == NULL) {
+	if (len < 0) {
 		return -ENOENT;
 	}
 	//len = strlen(resData);
@@ -405,10 +414,10 @@ static int hello_read(const char *path, char *buf, size_t size, off_t offset,
 }
 
 static struct fuse_operations hello_oper = {
-	.getattr	= hello_getattr,
-	.readdir	= hello_readdir,
-	.open		= hello_open,
-	.read		= hello_read,
+	.getattr	= my_getattr,
+	.readdir	= my_readdir,
+	.open		= my_open,
+	.read		= my_read,
 };
 
 int main(int argc, char *argv[])
@@ -449,29 +458,6 @@ int main(int argc, char *argv[])
 	add_file(folder, fd1, sizeof(int) * 2);
 	add_file(fileName5, data32, strlen(data32));
 	add_file(fileName2, data1, strlen(data1));
-	for (i = 0; i < FILE_NUMBER; i++) {
-		printf("%d %s \n", i, fs.fd[i].name);
-	}
-	size = myfread("/", buf);
-	for (i = 0; i < 4; i++)
-		printf("%d %d \n", i, ((int*)buf)[i]);
-	free(buf);
-	size = myfread("/file", buf);
-	printf("%s \n", buf);
-	free(buf);
-	size = myfread("/bigFile", buf);
-	printf("%s \n", buf);
-	free(buf);
-	size = myfread("/jusFile", buf);
-	printf("%s \n", buf);
-	free(buf);
-	size = myfread("/file1", buf);
-	printf("%s \n", buf);
-	free(buf);
-	size = myfread("/folder/ui", buf);
-	printf("%s \n", buf);
-	free(buf);
-	save_fs("fs");
-	//return fuse_main(argc, argv, &hello_oper, NULL);
+	return fuse_main(argc, argv, &hello_oper, NULL);
 	return 0;
 }
