@@ -65,6 +65,7 @@ int init_fs() {
 
 int load_fs() {
 	int i = 0;
+	init_fs();
 	FILE *pfile = fopen(FS_FILE,"r");
 	fread(fs.fd, sizeof(file_descr_t), FILE_NUMBER, pfile);
 	fread(fs.nextBlock, sizeof(int), BLOCK_NUMBER, pfile);
@@ -137,6 +138,7 @@ int write_precedence_vector(file_descr_t *fd) {
 	fseek(pfile, sizeof(file_descr_t) * FILE_NUMBER + i * sizeof(int), SEEK_SET);
 	fwrite(&fs.nextBlock[i], sizeof(int), 1, pfile);
 	while (i != -1) {
+		//printf("%d \n", i);
 		i = fs.nextBlock[i];
 		fseek(pfile, sizeof(file_descr_t) * FILE_NUMBER + i * sizeof(int), SEEK_SET);
 		fwrite(&fs.nextBlock[i], sizeof(int), 1, pfile);
@@ -146,6 +148,7 @@ int write_precedence_vector(file_descr_t *fd) {
 }
 
 int add_file(char *name, char *data, int size, char isFolder) {
+	int i = 0;
 	int previousBlock = -1;
 	int writtenBlocks = 0;
 	int currentBlock = 0;
@@ -166,7 +169,7 @@ int add_file(char *name, char *data, int size, char isFolder) {
 	fs.fd[file_descr_place].start = startBlock;
 	blocks = size / BLOCK_SIZE;
 	lastBlockBytes = size % BLOCK_SIZE;
-	currentBlock = startBlock;
+	previousBlock = currentBlock = startBlock;
 	while (writtenBlocks != blocks) {
 		writtenBlocks++;
 		previousBlock = currentBlock;
@@ -178,7 +181,7 @@ int add_file(char *name, char *data, int size, char isFolder) {
 			return NO_FREE_BLOCKS;
 		}
 		if (writtenBlocks == blocks) {
-			fs.nextBlock[previousBlock] = -1;
+			//fs.nextBlock[previousBlock] = -1;
 			break;
 		}
 		//set precedence for blocks
@@ -188,10 +191,11 @@ int add_file(char *name, char *data, int size, char isFolder) {
 		if (blocks != 0)
 			fs.nextBlock[previousBlock] = currentBlock;
 		previousBlock = currentBlock;
-		fs.nextBlock[previousBlock] = -1;
+		//fs.nextBlock[previousBlock] = -1;
 	}
+	fs.nextBlock[previousBlock] = -1;
 	_write(&fs.fd[file_descr_place], data, size);
-	write_fd(&fs.fd[file_descr_place], file_descr_place);
+	write_fd(&fs.fd[file_descr_place], file_descr_place);	
 	write_precedence_vector(&fs.fd[file_descr_place]);
 	return file_descr_place;
 }
@@ -239,15 +243,19 @@ int get_meta(const char *path, file_descr_t **fd) {
 	file_descr_t *meta = NULL;
 	int meta_id = -1;
 	int id = -1;
-	printf("name %s \n", path);
 	char filename[FILENAME_LENGTH], *data, *start, *ptr = path;
 	memset(filename, '\0', FILENAME_LENGTH);
-	if (*ptr++ == '/') {
-		meta = get_meta_by_id(0);
+	if (strcmp(path, "/") == 0) {
+		*fd = get_meta_by_id(0);
+		return 0;
 	}
+	if (*ptr++ == '/')
+		meta = get_meta_by_id(0);
 	else 
 		return NULL;
 	while ((ptr - path) != strlen(path)) {
+		if (meta->size == 0)
+			return -1;
 		size = get_data(meta, &data);
 		meta = NULL;
 		start = ptr;
@@ -273,7 +281,7 @@ int mkdir1(const char *path) {
 	char *filename;
 	int *data, *mdata;
 	file_descr_t *meta;
-	while (p = *ptr == '/' ? ptr : p, *ptr++ != '\0');// p = *ptr == '/' ? ptr : p;
+	while (p = *ptr == '/' ? ptr : p, *ptr++ != '\0');
 	if ((p - path) != 0) {
 		directory = (char*)malloc(sizeof(char) * (p - path));
 		strncpy(directory, path, p - path);
@@ -282,26 +290,15 @@ int mkdir1(const char *path) {
 	else {
 		directory = (char*)malloc(sizeof(char) * 2);
 		strcpy(directory, "/\0");
-		//directory[1] = '\0';
 	}
-	printf("%s \n", directory);
 	filename = (char*)malloc(sizeof(char) * (ptr - p));
 	strncpy(filename, p + 1, ptr - p);
-	printf("%s \n", filename);
 	id = get_meta(directory, &meta);
-	printf("meta dir %s \n", meta->name);
 	size = get_data(meta, &data);
-	//printf("data dir %s \n", data);
-	for (i = 0; i < size / sizeof(int); i++)
-		printf("%d ", data[i]);
 	mdata = (char*)malloc(size + sizeof(int));
-	//printf("mdata %s \n", mdata);
 	memcpy(mdata, data, size);
 	fd = add_file(filename, NULL, 0, 1);
-	printf("added file fd %d \n", fd);
 	mdata[size/sizeof(int)] = fd;
-	for (i = 0; i < (size + sizeof(int)) / sizeof(int); i++)
-		printf("%d ", mdata[i]);
 	_write(meta, mdata, size + sizeof(int));
 	meta->size = size + sizeof(int);
 	write_fd(meta, id);
@@ -313,7 +310,6 @@ int mkdir1(const char *path) {
 
 
 int create_clear_fs() {
-	printf("Hello");
 	int i = 0;
 	char *buf;
 	FILE *pfile;
@@ -340,6 +336,7 @@ int create_clear_fs() {
 	}
 	free(buf);
 	fclose(pfile);
+	init_fs();
 	add_file("/", buf, 0, 1);
 	return 0;
 }
@@ -354,15 +351,10 @@ static int my_getattr(const char *path, struct stat *stbuf)
 	char *data;
 
 	file_descr_t *meta;
-	get_meta(path, &meta);
+	int id = get_meta(path, &meta);
 
-	if (meta == NULL)
+	if (id == -1)
 		return -ENOENT;
-
-	//int len =  get_data(meta, &data);
-
-	//if (len < 0)
-	//	return -ENOENT;
 
 	memset(stbuf, 0, sizeof(struct stat));
 	if (meta->isFolder == 1) {
@@ -390,14 +382,15 @@ static int my_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	filler(buf, "..", NULL, 0);
 
 	file_descr_t *meta;
-	get_meta(path, &meta);
-	if (meta == NULL)
+	int id = get_meta(path, &meta);
+
+	if (id == -1)
 		return -ENOENT;
 
 	size = get_data(meta, &data);
 
-	if (size < 0)
-		return -ENOENT;
+	if (meta->size == 0)
+		return 0;
 
 	for (i = 0; i < size / sizeof(int); i++)
 		filler(buf, fs.fd[((int*)data)[i]].name, NULL, 0);
@@ -423,7 +416,6 @@ static int my_mkdir(const char *path, mode_t mode)
 {
 	int res;
 	res = mkdir1(path);
-	printf("RESULT OF MKDIR %d \n", res);
 	if (res != 0)
 		return -1;
 	return 0;
@@ -493,7 +485,7 @@ int main(int argc, char *argv[])
 	//init_fs();
 	if (argc > 1 && strcmp(argv[1],"n") == 0) {
 		create_clear_fs();
-		init_fs();
+		/*init_fs();
 		add_file(root, fd, sizeof(int) * 5, 1);
 		add_file(fileName1, data1, strlen(data1), 0);
 		add_file(fileName2, data2, strlen(data2), 0);
@@ -501,7 +493,7 @@ int main(int argc, char *argv[])
 		add_file(fileName4, data4, strlen(data4), 0);
 		add_file(folder, fd1, sizeof(int) * 2, 1);
 		add_file(fileName5, data32, strlen(data32), 0);
-		add_file(fileName2, data1, strlen(data1), 0);
+		add_file(fileName2, data1, strlen(data1), 0);*/
 	}/*
 	else {
 		load_fs();
