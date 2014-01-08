@@ -262,18 +262,17 @@ int get_meta(const char *path, file_descr_t **fd) {
 		while ((*ptr++ != '/') && ((ptr - path) < strlen(path)));
 		(ptr - path) < strlen(path) ? strncpy(filename, start, ptr - start - 1) : strncpy(filename, start, ptr - start);
 		id = get_id(data, size, filename);
-		if (id != -1) {
-			meta = get_meta_by_id(id);
-			meta_id = id;
-		}
+		if (id == -1)
+			return -1;
+		meta = get_meta_by_id(id);
 		memset(filename, '\0', FILENAME_LENGTH);
 		free(data);
 	}
 	*fd = meta;
-	return meta_id;
+	return id;
 }
 
-int mkdir1(const char *path) {
+int mkdir1(const char *path, int type) {
 	int i = 0;
 	int fd = 0, size = 0, id = -1;
 	char *p = NULL, *ptr = path;
@@ -297,7 +296,7 @@ int mkdir1(const char *path) {
 	size = get_data(meta, &data);
 	mdata = (char*)malloc(size + sizeof(int));
 	memcpy(mdata, data, size);
-	fd = add_file(filename, NULL, 0, 1);
+	fd = add_file(filename, NULL, 0, type);
 	mdata[size/sizeof(int)] = fd;
 	_write(meta, mdata, size + sizeof(int));
 	meta->size = size + sizeof(int);
@@ -307,6 +306,40 @@ int mkdir1(const char *path) {
 	free(directory);
 	return 0;
 }
+
+int remove_dir(const char *path) {
+	int i = 0, j = 0;
+	int fd = 0, size = 0, directory_id = -1, file_id = -1;
+	char *p = NULL, *ptr = path;
+	char *directory;
+	int *data, *mdata;
+	file_descr_t *directory_fd, *file_fd;
+	while (p = *ptr == '/' ? ptr : p, *ptr++ != '\0');
+	if ((p - path) != 0) {
+		directory = (char*)malloc(sizeof(char) * (p - path));
+		strncpy(directory, path, p - path);
+		directory[p - path] = '\0';
+	}
+	else {
+		directory = (char*)malloc(sizeof(char) * 2);
+		strcpy(directory, "/\0");
+	}
+	directory_id = get_meta(directory, &directory_fd);
+	file_id = get_meta(path, &file_fd);
+	size = get_data(directory_fd, &data);
+
+	mdata = (char*)malloc(size - sizeof(int));
+	for (i = 0; i < size/sizeof(int); i++)
+		if (data[i] != file_id)
+			mdata[j++] = data[i];
+	_write(directory_fd, mdata, size - sizeof(int));
+	directory_fd->size = size - sizeof(int);
+	write_fd(directory_fd, directory_id);
+	free(data);
+	free(directory);
+	return 0;
+}
+
 
 
 int create_clear_fs() {
@@ -369,9 +402,15 @@ static int my_getattr(const char *path, struct stat *stbuf)
 	return res;
 }
 
-static int my_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
-			 off_t offset, struct fuse_file_info *fi)
-{
+static int my_create (const char *path, mode_t mode, struct fuse_file_info *fi) {
+	int res;
+	res = mkdir1(path, 0);
+	if (res != 0)
+		return -1;
+	return 0;
+}
+
+static int my_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) {
 	int i = 0;
 	(void) offset;
 	(void) fi;
@@ -412,10 +451,37 @@ static int my_open(const char *path, struct fuse_file_info *fi)
 	return 0;
 }
 
-static int my_mkdir(const char *path, mode_t mode)
-{
+static int my_mkdir(const char *path, mode_t mode) {
 	int res;
-	res = mkdir1(path);
+	res = mkdir1(path, 1);
+	if (res != 0)
+		return -1;
+	return 0;
+}
+
+static int my_unlink (const char *path) {
+	int res;
+	res = remove_dir(path);
+	if (res != 0)
+		return -1;
+	return 0;
+}
+
+static int my_write (const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
+	file_descr_t *fd;
+	int res;
+	int fd_id = get_meta(path, &fd);
+	if (fd_id == -1)
+		return -ENOENT;
+	res = _write(fd, buf, size);
+	if (res != 0)
+		return -1;
+	return 0;
+}
+
+static int my_rmdir(const char *path) {
+	int res;
+	res = remove_dir(path);
 	if (res != 0)
 		return -1;
 	return 0;
@@ -451,47 +517,16 @@ static struct fuse_operations hello_oper = {
 	.open		= my_open,
 	.read		= my_read,
 	.mkdir		= my_mkdir,
+	.rmdir		= my_rmdir,
+	.create		= my_create,
+	.unlink		= my_unlink,
+	.write		= my_write,
 };
 
 int main(int argc, char *argv[])
 {
-	int i = 0;
-	int size = 0;
-	char *fileName1 = "file";
-	char *data1 = "trololo";
-	char *fileName2 = "bigFile";
-	char *data2 = "trolologknekneuwinbonboinemlisnkjvbnblmb;wnboiwrnbkmlbknlkwnbl;wmbln";
-	char *fileName3 = "jusFile";
-	char *data3 = "I'm file!";
-	char *fileName4 = "file1";
-	char *data4 = "klnblwbnowobnoiwnbonw";
-	char *root = "/";
-	char *folder = "folder";
-	char *buf;
-	char *fileName5 = "ui";
-	char *data32 = "trampapapaprara";
-	int fd[5];
-	fd[0] = 1;
-	fd[1] = 2;
-	fd[2] = 3;
-	fd[3] = 4;
-	fd[4] = 5;
-	int fd1[2];
-	fd1[0] = 6;
-	fd1[1] = 7;
-	
-	if (argc > 1 && strcmp(argv[1],"n") == 0) {
+	if (argc > 1 && strcmp(argv[1],"n") == 0)
 		create_clear_fs();
-		/*init_fs();
-		add_file(root, fd, sizeof(int) * 5, 1);
-		add_file(fileName1, data1, strlen(data1), 0);
-		add_file(fileName2, data2, strlen(data2), 0);
-		add_file(fileName3, data3, strlen(data3), 0);
-		add_file(fileName4, data4, strlen(data4), 0);
-		add_file(folder, fd1, sizeof(int) * 2, 1);
-		add_file(fileName5, data32, strlen(data32), 0);
-		add_file(fileName2, data1, strlen(data1), 0);*/
-	}
 	load_fs();
 	return fuse_main(argc, argv, &hello_oper, NULL);
 }
