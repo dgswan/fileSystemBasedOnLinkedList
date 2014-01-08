@@ -480,9 +480,6 @@ int main(int argc, char *argv[])
 	fd1[0] = 6;
 	fd1[1] = 7;
 	
-
-	//create_clear_fs();
-	//init_fs();
 	if (argc > 1 && strcmp(argv[1],"n") == 0) {
 		create_clear_fs();
 		/*init_fs();
@@ -494,36 +491,7 @@ int main(int argc, char *argv[])
 		add_file(folder, fd1, sizeof(int) * 2, 1);
 		add_file(fileName5, data32, strlen(data32), 0);
 		add_file(fileName2, data1, strlen(data1), 0);*/
-	}/*
-	else {
-		load_fs();
-		mkdir1("/folder/fol1");
-		file_descr_t *mfd;
-		get_meta("/folder/fol1", &mfd);
-		printf("meta %s \n", mfd->name);
-	}*/
-	load_fs();/*
-		
-		file_descr_t *mfd;
-		get_meta("/folder/fol1", &mfd);
-		printf("%s %d %d", mfd->name, mfd->size, mfd->isFolder);*/
-		//size = get_data(mfd, &buf);
-		//printf("%s \n", buf);
-		/*for (i = 0; i < 3; i++)
-			printf("%d \n", ((int*)buf)[i]);
-		for (i = 0; i < 3; i++)
-			printf("%s \n", fs.fd[((int*)buf)[i]].name);
-		free(buf);*/
-/*
-		mfd = get_meta("/folder/ui");
-		size = get_data(mfd, &buf);
-		printf("%s \n", buf);
-		free(buf);
-	}*/
+	}
+	load_fs();
 	return fuse_main(argc, argv, &hello_oper, NULL);
-	//if (mkdir1("/fol") != 0)
-	//	printf("failure\n");
-	//file_descr_t *mfd = get_meta("/fol");
-	//printf("%s \n", mfd->name);
-	//return 0;
 }
