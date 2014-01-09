@@ -103,33 +103,9 @@ int write_fd(fd_t *fd, int id) {
 }
 
 int write_data(fd_t *fd, void *data, int size) {
-	int curr = 0, prev = 0, blocks = 0, written = 0, bytes_in_last_block = 0, i = 0, j = 0, b = 0;
+	int i = 0, j = 0, b = 0;
 	if (size == 0)
 		return 0;
-	blocks = size / BLOCK_SIZE;
-	printf("blocks %d \n", blocks);
-	prev = fd->start;
-	if (blocks != 0) {
-		while (written != blocks) {
-			curr = find_free_block();
-			printf("curr %d \n", curr);
-			if (curr == E_NFB) {
-				free_blocks(fd);
-				return E_NFB;
-			}
-			fs.next[prev] = curr;
-			prev = curr;
-			written++;
-		}
-	}
-	bytes_in_last_block = size % BLOCK_SIZE;
-	if (bytes_in_last_block != 0 && blocks != 0) {
-		curr = find_free_block();
-		printf("curr %d \n", curr);
-		fs.next[prev] = curr;
-		prev = curr;
-	}
-	fs.next[prev] = -1;
 	FILE *pfile = fopen(FS_FILE, "r+");
 	i = fd->start;
 	b = BLOCK_SIZE;
@@ -252,14 +228,56 @@ int get_fd(const char *path, fd_t **fd) {
 	return id;
 }
 
-int mkfile(const char *path, int type) {
-	int i = 0;
-	int fd = 0, size = 0, id = -1;
-	char *p = NULL, *ptr = path;
+int truncate(fd_t *fd, int offset) {
+	int curr = 0, prev = 0, blocks = 0, written = 0, bytes_in_last_block = 0, i = 0;
+	if (offset == 0)
+		return 0;
+	blocks = offset / BLOCK_SIZE;
+	printf("blocks %d \n", blocks);
+	//prev = fd->start;
+	curr = fd->start;
+	if (blocks != 0) {
+		while (curr != -1) {
+			prev = curr;
+			curr = fs.next[i];
+		}
+		while (written != 0) {
+			curr = find_free_block();
+			if (curr == E_NFB) {
+				free_blocks(fd);
+				return E_NFB;
+			}
+			fs.next[prev] = curr;
+			prev = curr;
+			written--;
+		}
+		/*while (written != blocks) {
+			curr = find_free_block();
+			printf("curr %d \n", curr);
+			if (curr == E_NFB) {
+				free_blocks(fd);
+				return E_NFB;
+			}
+			fs.next[prev] = curr;
+			prev = curr;
+			written++;
+		}*/
+	}
+	bytes_in_last_block = offset % BLOCK_SIZE;
+	if (bytes_in_last_block != 0 && blocks != 0) {
+		curr = find_free_block();
+		printf("curr %d \n", curr);
+		fs.next[prev] = curr;
+		prev = curr;
+	}
+	fs.next[prev] = -1;
+	fd->size = fd->size + offset;
+	return 0;
+}
+
+char *get_directory(char *path) {
 	char *directory;
-	char *filename;
-	int *data, *mdata;
-	fd_t *meta;
+	char *p = NULL, *ptr = path;
 	while (p = *ptr == '/' ? ptr : p, *ptr++ != '\0');
 	if ((p - path) != 0) {
 		directory = (char*)malloc(sizeof(char) * (p - path));
@@ -270,8 +288,30 @@ int mkfile(const char *path, int type) {
 		directory = (char*)malloc(sizeof(char) * 2);
 		strcpy(directory, "/\0");
 	}
+	return directory;
+}
+
+char *get_filename(char *path) {
+	char *filename;
+	char *p = NULL, *ptr = path;
+	while (p = *ptr == '/' ? ptr : p, *ptr++ != '\0');
 	filename = (char*)malloc(sizeof(char) * (ptr - p));
 	strncpy(filename, p + 1, ptr - p);
+	return filename;
+}
+
+int mkfile(const char *path, int type) {
+	int i = 0;
+	int fd = 0, size = 0, id = -1;
+	//char *p = NULL, *ptr = path;
+	char *directory;
+	char *filename;
+	int *data, *mdata;
+	fd_t *meta;
+	directory = get_directory(path);
+	printf("%s \n", directory);
+	filename = get_filename(path);
+	printf("%s \n", filename);
 	id = get_fd(directory, &meta);
 	size = get_data(meta, &data);
 	mdata = (char*)malloc(size + sizeof(int));
@@ -509,17 +549,50 @@ static int my_read(const char *path, char *buf, size_t size, off_t offset,
 	return size;
 }
 
-static int truncate(const char *path, off_t offser) {
-
-}
-
-static int my_rename(const char *path, const char *new_name) {
-	printf("%s \n %s \n", path, new_name);
+static int my_truncate(const char *path, off_t offset) {
+	printf("TRUNCATE! \n");
 	fd_t *fd = NULL;
 	int fd_id = 0;
+	if (offset == 0)
+		return 0;
 	fd_id = get_fd(path, &fd);
-	strcpy(fd->name, new_name);
+	if (fd_id == -1)
+		return -1;
+	truncate(fd, offset);
+	write(fd, fd_id);
+	return 0;
+}
+
+static int my_rename(const char *path, const char *new_path) {
+	char *ndir = NULL, *nname = NULL;
+	fd_t *ndir_fd = NULL;
+	int ndir_fd_id = 0;
+	int *ndir_data, *ndir_ndata;
+	fd_t *fd = NULL;
+	int fd_id = 0;
+	ndir = get_directory(new_path);
+	nname = get_filename(new_path);
+	printf("%s \n %s \n", ndir, nname);
+	fd_id = get_fd(path, &fd);
+	strcpy(fd->name, nname);
 	write_fd(fd, fd_id);
+	//delete fd id from old directory
+	rmfile(path);
+	printf("DELETED \n");
+	//write fd if to new directory
+
+	ndir_fd_id = get_fd(ndir, &ndir_fd);
+	get_data(ndir_fd, &ndir_data);
+
+	ndir_ndata = (int*)malloc(ndir_fd->size + sizeof(int));
+	ndir_ndata[ndir_fd->size/sizeof(int)] = fd_id;
+
+	write_data(ndir_fd, ndir_ndata, ndir_fd->size + sizeof(int));
+	ndir_fd->size += sizeof(int);
+	write_fd(ndir_fd, ndir_fd_id);
+
+	free(ndir_data);
+	free(ndir_ndata);
 	return 0;
 }
 
@@ -536,6 +609,7 @@ static struct fuse_operations oper = {
 	.opendir	= my_opendir,
 	.init		= my_init,
 	.rename		= my_rename,
+	.truncate	= my_truncate,
 };
 
 int main(int argc, char *argv[])
