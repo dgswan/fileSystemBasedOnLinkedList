@@ -8,10 +8,10 @@
 
 #include <stdlib.h>
 
-#define BLOCK_NUMBER 32
-#define BLOCK_SIZE 32
-#define FILENAME_LENGTH 32
-#define FILE_NUMBER 32
+#define BLOCK_NUMBER 1024
+#define BLOCK_SIZE 2048
+#define FILENAME_LENGTH 100
+#define FILE_NUMBER 64
 
 #define E_NES 1000
 #define E_NFB 1001
@@ -90,7 +90,7 @@ fd_t *get_fd_by_id(int id) {
 	return &fs.fd[id];
 }
 
-int delete_file(char *name) {
+int free_blocks(fd_t *fd) {
 	return 0;
 }
 
@@ -103,10 +103,36 @@ int write_fd(fd_t *fd, int id) {
 }
 
 int write_data(fd_t *fd, void *data, int size) {
+	int curr = 0, prev = 0, blocks = 0, written = 0, bytes_in_last_block = 0, i = 0, j = 0, b = 0;
 	if (size == 0)
 		return 0;
-	int i = fd->start, j = 0, b = BLOCK_SIZE;
+	blocks = size / BLOCK_SIZE;
+	printf("blocks %d \n", blocks);
+	prev = fd->start;
+	if (blocks != 0) {
+		while (written != blocks) {
+			curr = find_free_block();
+			printf("curr %d \n", curr);
+			if (curr == E_NFB) {
+				free_blocks(fd);
+				return E_NFB;
+			}
+			fs.next[prev] = curr;
+			prev = curr;
+			written++;
+		}
+	}
+	bytes_in_last_block = size % BLOCK_SIZE;
+	if (bytes_in_last_block != 0 && blocks != 0) {
+		curr = find_free_block();
+		printf("curr %d \n", curr);
+		fs.next[prev] = curr;
+		prev = curr;
+	}
+	fs.next[prev] = -1;
 	FILE *pfile = fopen(FS_FILE, "r+");
+	i = fd->start;
+	b = BLOCK_SIZE;
 	while (i != -1) {
 		b = (j * BLOCK_SIZE + BLOCK_SIZE) > size ? size % BLOCK_SIZE : b;
 		fseek(pfile, sizeof(fd_t) * FILE_NUMBER + sizeof(int) * BLOCK_NUMBER + i * BLOCK_SIZE, SEEK_SET);
@@ -115,6 +141,9 @@ int write_data(fd_t *fd, void *data, int size) {
 		j++;
 	}
 	fd->size = size;
+	for (i = fd->start; i = fs.next[i]; i != -1)
+		printf("i = %d \n", i);
+	write_precedence_vector(fd);
 	fclose(pfile);
 	return 0;
 }
@@ -135,7 +164,7 @@ int write_precedence_vector(fd_t *fd) {
 
 int add_file(char *name, char *data, int size, char is_folder) {
 	fd_t *fd = NULL;
-	int start = 0, curr = 0, prev = -1, blocks = 0, written = 0, bytes_in_last_block = 0, i = 0;
+	int start = 0; 
 	int fd_id = find_free_fd_id();
 	if (fd_id == E_NFD)
 		return E_NFD;
@@ -147,33 +176,8 @@ int add_file(char *name, char *data, int size, char is_folder) {
 	start = find_free_block();
 	if (start == E_NFB)
 		return E_NFB;
-	//write to blocks
 	fd->start = start;
-	blocks = size / BLOCK_SIZE;
-	bytes_in_last_block = size % BLOCK_SIZE;
-	prev = curr = start;
-	while (written != blocks) {
-		written++;
-		prev = curr;
-		fs.next[prev] = -1;
-		//find next block
-		curr = find_free_block();
-		if (curr == E_NFB) {
-			delete_file(name);
-			return E_NFB;
-		}
-		if (written == blocks)
-			break;
-		//set precedence for blocks
-		fs.next[prev] = curr;
-	}
-	if (bytes_in_last_block != 0) {
-		if (blocks != 0)
-			fs.next[prev] = curr;
-		prev = curr;
-	}
-	fs.next[prev] = -1;
-	write_data(fd, data, size);
+	fs.next[start] = -1;
 	write_fd(fd, fd_id);	
 	write_precedence_vector(fd);
 	return fd_id;
@@ -214,7 +218,7 @@ int get_id(char *data, int size, char *filename) {
 	return -1;
 }
 
-int get_meta(const char *path, fd_t **fd) {
+int get_fd(const char *path, fd_t **fd) {
 	int size = 0;
 	fd_t *meta = NULL;
 	int meta_id = -1;
@@ -248,7 +252,7 @@ int get_meta(const char *path, fd_t **fd) {
 	return id;
 }
 
-int mkdir1(const char *path, int type) {
+int mkfile(const char *path, int type) {
 	int i = 0;
 	int fd = 0, size = 0, id = -1;
 	char *p = NULL, *ptr = path;
@@ -268,7 +272,7 @@ int mkdir1(const char *path, int type) {
 	}
 	filename = (char*)malloc(sizeof(char) * (ptr - p));
 	strncpy(filename, p + 1, ptr - p);
-	id = get_meta(directory, &meta);
+	id = get_fd(directory, &meta);
 	size = get_data(meta, &data);
 	mdata = (char*)malloc(size + sizeof(int));
 	memcpy(mdata, data, size);
@@ -283,7 +287,7 @@ int mkdir1(const char *path, int type) {
 	return 0;
 }
 
-int remove_dir(const char *path) {
+int rmfile(const char *path) {
 	int i = 0, j = 0;
 	int fd = 0, size = 0, directory_id = -1, file_id = -1;
 	char *p = NULL, *ptr = path;
@@ -300,8 +304,8 @@ int remove_dir(const char *path) {
 		directory = (char*)malloc(sizeof(char) * 2);
 		strcpy(directory, "/\0");
 	}
-	directory_id = get_meta(directory, &directory_fd);
-	file_id = get_meta(path, &file_fd);
+	directory_id = get_fd(directory, &directory_fd);
+	file_id = get_fd(path, &file_fd);
 	size = get_data(directory_fd, &data);
 
 	mdata = (char*)malloc(size - sizeof(int));
@@ -360,7 +364,7 @@ static int my_getattr(const char *path, struct stat *stbuf)
 	char *data;
 
 	fd_t *meta;
-	int id = get_meta(path, &meta);
+	int id = get_fd(path, &meta);
 
 	if (id == -1)
 		return -ENOENT;
@@ -381,7 +385,7 @@ static int my_getattr(const char *path, struct stat *stbuf)
 
 static int my_create (const char *path, mode_t mode, struct fuse_file_info *fi) {
 	int res;
-	res = mkdir1(path, 0);
+	res = mkfile(path, 0);
 	if (res != 0)
 		return -1;
 	return 0;
@@ -398,7 +402,7 @@ static int my_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t
 	filler(buf, "..", NULL, 0);
 
 	fd_t *meta;
-	int id = get_meta(path, &meta);
+	int id = get_fd(path, &meta);
 
 	if (id == -1)
 		return -ENOENT;
@@ -417,7 +421,7 @@ static int my_open(const char *path, struct fuse_file_info *fi)
 {
 	fd_t *meta;
 	int fd_id = 0;
-	fd_id = get_meta(path, &meta);
+	fd_id = get_fd(path, &meta);
 	if (fd_id == -1)
 		return -ENOENT;
 	return 0;
@@ -426,15 +430,15 @@ static int my_open(const char *path, struct fuse_file_info *fi)
 static int my_opendir(const char *path, struct fuse_file_info *fi) {
 	fd_t *meta;
 	int fd_id = 0;
-	fd_id = get_meta(path, &meta);
+	fd_id = get_fd(path, &meta);
 	if (fd_id == -1)
 		return -ENOENT;
 	return 0;
 }
 
-static int my_mkdir(const char *path, mode_t mode) {
+static int my_mkfile(const char *path, mode_t mode) {
 	int res;
-	res = mkdir1(path, 1);
+	res = mkfile(path, 1);
 	if (res != 0)
 		return -1;
 	return 0;
@@ -442,7 +446,7 @@ static int my_mkdir(const char *path, mode_t mode) {
 
 static int my_unlink(const char *path) {
 	int res;
-	res = remove_dir(path);
+	res = rmfile(path);
 	if (res != 0)
 		return -1;
 	return 0;
@@ -451,9 +455,10 @@ static int my_unlink(const char *path) {
 static int my_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
 	fd_t *fd;
 	int res;
-	int fd_id = get_meta(path, &fd);
+	int fd_id = get_fd(path, &fd);
 	if (fd_id == -1)
 		return -ENOENT;
+	printf("size = %d offset = %d \n", size, offset);
 	res = write_data(fd, buf, size);
 	write_fd(fd, fd_id);
 	if (res != 0)
@@ -461,9 +466,20 @@ static int my_write(const char *path, const char *buf, size_t size, off_t offset
 	return 0;
 }
 
-static int my_rmdir(const char *path) {
+static int my_init(struct fuse_conn_info *fi) {
+	int i = 0;
+	load_fs();
+	printf("--------------------\n");
+	for (i = 0; i < FILE_NUMBER; i++)
+		printf("%s %d \n", fs.fd[i].name, fs.fd[i].start);
+	for (i = 0; i < BLOCK_NUMBER; i++)
+		printf("%d %d \n", i, fs.next[i]);
+	printf("--------------------\n");
+}
+
+static int my_rmfile(const char *path) {
 	int res;
-	res = remove_dir(path);
+	res = rmfile(path);
 	if (res != 0)
 		return -1;
 	return 0;
@@ -475,7 +491,7 @@ static int my_read(const char *path, char *buf, size_t size, off_t offset,
 	size_t len;
 	char *data;
 	fd_t *meta;
-	get_meta(path, &meta);
+	get_fd(path, &meta);
 	if (meta == NULL)
 		return -ENOENT;
 
@@ -493,30 +509,38 @@ static int my_read(const char *path, char *buf, size_t size, off_t offset,
 	return size;
 }
 
-static struct fuse_operations hello_oper = {
+static int truncate(const char *path, off_t offser) {
+
+}
+
+static int my_rename(const char *path, const char *new_name) {
+	printf("%s \n %s \n", path, new_name);
+	fd_t *fd = NULL;
+	int fd_id = 0;
+	fd_id = get_fd(path, &fd);
+	strcpy(fd->name, new_name);
+	write_fd(fd, fd_id);
+	return 0;
+}
+
+static struct fuse_operations oper = {
 	.getattr	= my_getattr,
 	.readdir	= my_readdir,
 	.open		= my_open,
 	.read		= my_read,
-	.mkdir		= my_mkdir,
-	.rmdir		= my_rmdir,
+	.mkdir		= my_mkfile,
+	.rmdir		= my_rmfile,
 	.create		= my_create,
 	.unlink		= my_unlink,
 	.write		= my_write,
 	.opendir	= my_opendir,
+	.init		= my_init,
+	.rename		= my_rename,
 };
 
 int main(int argc, char *argv[])
 {
-	int i = 0;
 	if (argc > 1 && strcmp(argv[1],"n") == 0)
 		create_clear_fs();
-	load_fs();
-	printf("--------------------\n");
-	for (i = 0; i < FILE_NUMBER; i++)
-		printf("%s %d \n", fs.fd[i].name, fs.fd[i].start);
-	for (i = 0; i < BLOCK_NUMBER; i++)
-		printf("%d %d \n", i, fs.next[i]);
-	printf("--------------------\n");
-	return fuse_main(argc, argv, &hello_oper, NULL);
+	return fuse_main(argc, argv, &oper, NULL);
 }
